@@ -3,8 +3,14 @@ import { json } from '@sveltejs/kit';
 import z from 'zod';
 import type { RequestHandler } from './$types.js';
 import { validateRequest } from './_helpers.js';
+import { validateAuthHeader } from './_helpers.js';
 
-export const GET: RequestHandler = async ({ locals }) => {
+export const GET: RequestHandler = async ({ locals, request }) => {
+  const validToken = await validateAuthHeader(request.headers.get('Authorization'));
+  if (!validToken) return new Response('Unauthorized', { status: 401 });
+  const authedUserId = (validToken as { userId?: string }).userId;
+  if (!authedUserId) return new Response('Invalid token', { status: 400 });
+
   const reqValidation = await validateRequest({
     querySchema: z.object({ project_id: z.string().uuid().optional() })
   });
@@ -13,7 +19,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 
   const result = await locals.db.query.tasks.findMany({
     where: (table, { eq, and }) => {
-      const conditions = [];
+      const conditions = [eq(table.created_by, authedUserId)];
       if (project_id) {
         conditions.push(eq(table.project_id, project_id));
       }
@@ -34,7 +40,12 @@ const CreateTaskSchema = z.object({
   status: z.enum(taskStatusEnum.enumValues).optional().default('todo')
 });
 
-export const POST: RequestHandler = async ({ locals }) => {
+export const POST: RequestHandler = async ({ locals, request }) => {
+  const validToken = await validateAuthHeader(request.headers.get('Authorization'));
+  if (!validToken) return new Response('Unauthorized', { status: 401 });
+  const authedUserId = (validToken as { userId?: string }).userId;
+  if (!authedUserId) return new Response('Invalid token', { status: 400 });
+
   const reqValidation = await validateRequest({
     bodySchema: CreateTaskSchema
   });
@@ -47,7 +58,8 @@ export const POST: RequestHandler = async ({ locals }) => {
       title,
       description,
       project_id: project_id,
-      status
+      status,
+      created_by: authedUserId
     })
     .returning();
 
